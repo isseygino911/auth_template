@@ -57,7 +57,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const { category, search } = req.query;
   
   let sql = `
-    SELECT id, name, description, price, category, image_url, stock_quantity, status
+    SELECT id, uuid, name, description, price, category, image_url, stock_quantity, status
     FROM products 
     WHERE status = 'active'
   `;
@@ -82,7 +82,7 @@ router.get('/', asyncHandler(async (req, res) => {
 // Get featured products (for homepage)
 router.get('/featured', asyncHandler(async (req, res) => {
   const sql = `
-    SELECT id, name, description, price, category, image_url
+    SELECT id, uuid, name, description, price, category, image_url
     FROM products 
     WHERE status = 'active'
     ORDER BY created_at DESC
@@ -104,13 +104,17 @@ router.get('/categories', asyncHandler(async (req, res) => {
   res.json({ categories: categories.map(c => c.category) });
 }));
 
-// Get single product (public)
+// Get single product (public) - accepts UUID or numeric ID
 router.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
+  
+  // Check if id is a UUID format (contains hyphens and is 36 chars)
+  const isUUID = id.includes('-') && id.length === 36;
+  
   const result = await db.query(
-    `SELECT id, name, description, price, category, image_url, stock_quantity, status, created_at
+    `SELECT id, uuid, name, description, price, category, image_url, stock_quantity, status, created_at
      FROM products 
-     WHERE id = ? AND status = 'active'`,
+     WHERE ${isUUID ? 'uuid' : 'id'} = ? AND status = 'active'`,
     [id]
   );
   
@@ -127,7 +131,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
     `SELECT id, image_url, is_primary, sort_order FROM product_images 
      WHERE product_id = ? 
      ORDER BY is_primary DESC, sort_order ASC`,
-    [id]
+    [product.id]
   );
   let images = normalizeResult(imgResult);
   

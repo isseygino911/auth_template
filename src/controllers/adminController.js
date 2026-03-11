@@ -1,6 +1,7 @@
 import { db } from '../config/db.js';
-import { generateUploadUrl, deleteObject, getPresignedUrl, extractS3Key } from '../config/s3.js';
+import { generateUploadUrl, generateViewUrl, deleteObject, getPresignedUrl, extractS3Key } from '../config/s3.js';
 import { asyncHandler } from '../middleware/error.js';
+import { randomUUID } from 'crypto';
 
 // Helper to generate order number
 const generateOrderNumber = () => {
@@ -85,7 +86,14 @@ export const getProducts = asyncHandler(async (req, res) => {
 // Get single product with all images
 export const getProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const result = await db.query('SELECT * FROM products WHERE id = ?', [id]);
+  
+  // Check if id is a UUID format (contains hyphens and is 36 chars)
+  const isUUID = id.includes('-') && id.length === 36;
+  
+  const result = await db.query(
+    `SELECT * FROM products WHERE ${isUUID ? 'uuid' : 'id'} = ?`,
+    [id]
+  );
   const products = normalizeResult(result);
   
   if (products.length === 0) {
@@ -97,7 +105,7 @@ export const getProduct = asyncHandler(async (req, res) => {
   // Fetch all images from product_images table
   const imgResult = await db.query(
     'SELECT * FROM product_images WHERE product_id = ? ORDER BY is_primary DESC, sort_order ASC',
-    [id]
+    [product.id]
   );
   let images = normalizeResult(imgResult);
   
@@ -150,11 +158,14 @@ export const createProduct = asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
     
+    // Generate UUID for product
+    const uuid = randomUUID();
+    
     // Insert product
     const productResult = await connection.query(
-      `INSERT INTO products (name, description, price, category, image_url, stock_quantity, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, description || '', price, category, validImages[0], stock_quantity || 0, status || 'active']
+      `INSERT INTO products (uuid, name, description, price, category, image_url, stock_quantity, status) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [uuid, name, description || '', price, category, validImages[0], stock_quantity || 0, status || 'active']
     );
     
     const productId = productResult.insertId;
@@ -178,7 +189,7 @@ export const createProduct = asyncHandler(async (req, res) => {
     
     res.status(201).json({ 
       message: 'Product created successfully',
-      product: product[0]
+      product: await convertProductImagesToPresigned(product[0])
     });
   } catch (error) {
     await connection.rollback();
@@ -193,6 +204,19 @@ export const createProduct = asyncHandler(async (req, res) => {
 export const updateProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { name, description, price, category, image_url, images, stock_quantity, status } = req.body;
+  
+  // Check if id is a UUID format and get numeric ID
+  const isUUID = id.includes('-') && id.length === 36;
+  let productId = id;
+  
+  if (isUUID) {
+    const uuidResult = await db.query('SELECT id FROM products WHERE uuid = ?', [id]);
+    const uuidProducts = normalizeResult(uuidResult);
+    if (uuidProducts.length === 0) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    productId = uuidProducts[0].id;
+  }
   
   const connection = await db.getConnection();
   
@@ -211,7 +235,7 @@ export const updateProduct = asyncHandler(async (req, res) => {
         status = ? 
       WHERE id = ?`,
       [name, description || '', price, category, images && images.length > 0 ? images[0] : image_url, 
-       stock_quantity || 0, status || 'active', id]
+       stock_quantity || 0, status || 'active', productId]
     );
     
     // If new images provided, update product_images
@@ -221,13 +245,13 @@ export const updateProduct = asyncHandler(async (req, res) => {
       
       if (validImages.length > 0) {
         // Delete old images
-        await connection.query('DELETE FROM product_images WHERE product_id = ?', [id]);
+        await connection.query('DELETE FROM product_images WHERE product_id = ?', [productId]);
         
         // Insert new images
         for (let i = 0; i < validImages.length; i++) {
           await connection.query(
             'INSERT INTO product_images (product_id, image_url, is_primary, sort_order) VALUES (?, ?, ?, ?)',
-            [id, validImages[i], i === 0 ? 1 : 0, i]
+            [productId, validImages[i], i === 0 ? 1 : 0, i]
           );
         }
       }
@@ -235,12 +259,12 @@ export const updateProduct = asyncHandler(async (req, res) => {
     
     await connection.commit();
     
-    const result = await db.query('SELECT * FROM products WHERE id = ?', [id]);
+    const result = await db.query('SELECT * FROM products WHERE id = ?', [productId]);
     const product = normalizeResult(result);
     
     res.json({ 
       message: 'Product updated successfully',
-      product: product[0]
+      product: await convertProductImagesToPresigned(product[0])
     });
   } catch (error) {
     await connection.rollback();
@@ -255,15 +279,28 @@ export const updateProduct = asyncHandler(async (req, res) => {
 export const deleteProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
   
+  // Check if id is a UUID format and get numeric ID
+  const isUUID = id.includes('-') && id.length === 36;
+  let productId = id;
+  
+  if (isUUID) {
+    const uuidResult = await db.query('SELECT id FROM products WHERE uuid = ?', [id]);
+    const uuidProducts = normalizeResult(uuidResult);
+    if (uuidProducts.length === 0) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    productId = uuidProducts[0].id;
+  }
+  
   // Get product to check for legacy image_url
-  const productResult = await db.query('SELECT image_url FROM products WHERE id = ?', [id]);
+  const productResult = await db.query('SELECT image_url FROM products WHERE id = ?', [productId]);
   const products = normalizeResult(productResult);
   const product = products[0];
   
   // Get all images for this product
   const imgResult = await db.query(
     'SELECT image_url FROM product_images WHERE product_id = ?',
-    [id]
+    [productId]
   );
   const images = normalizeResult(imgResult);
   
@@ -294,7 +331,7 @@ export const deleteProduct = asyncHandler(async (req, res) => {
   }
   
   // Delete product (product_images will be deleted via CASCADE)
-  await db.query('DELETE FROM products WHERE id = ?', [id]);
+  await db.query('DELETE FROM products WHERE id = ?', [productId]);
   
   res.json({ 
     message: 'Product and images deleted successfully',
@@ -313,9 +350,13 @@ export const getUploadUrl = asyncHandler(async (req, res) => {
   const key = `products/${Date.now()}-${filename}`;
   const { uploadUrl, publicUrl } = await generateUploadUrl(key, contentType);
   
+  // Generate a presigned URL for immediate preview (1 hour expiry)
+  const viewUrl = await generateViewUrl(key, 3600);
+  
   res.json({ 
     uploadUrl, 
     publicUrl,
+    viewUrl,
     key 
   });
 });
