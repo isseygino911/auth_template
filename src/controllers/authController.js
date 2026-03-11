@@ -23,16 +23,16 @@ export const register = asyncHandler(async (req, res) => {
   // Hash password and create user
   const passwordHash = await hashPassword(password);
   const result = await db.query(
-    'INSERT INTO users (email, password_hash) VALUES (?, ?)',
-    [email, passwordHash]
+    'INSERT INTO users (email, password_hash, is_admin) VALUES (?, ?, ?)',
+    [email, passwordHash, false]
   );
 
-  const token = generateToken({ userId: result.insertId, email });
+  const token = generateToken({ userId: result.insertId, email, isAdmin: false });
 
   res.status(201).json({
     message: 'User registered successfully',
     token,
-    user: { id: result.insertId, email },
+    user: { id: result.insertId, email, is_admin: false },
   });
 });
 
@@ -44,7 +44,7 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   // Find user
-  const users = await db.query('SELECT id, email, password_hash FROM users WHERE email = ?', [email]);
+  const users = await db.query('SELECT id, email, password_hash, is_admin FROM users WHERE email = ?', [email]);
   if (users.length === 0) {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
@@ -57,17 +57,17 @@ export const login = asyncHandler(async (req, res) => {
     return res.status(401).json({ message: 'Invalid credentials' });
   }
 
-  const token = generateToken({ userId: user.id, email: user.email });
+  const token = generateToken({ userId: user.id, email: user.email, isAdmin: user.is_admin });
 
   res.json({
     message: 'Login successful',
     token,
-    user: { id: user.id, email: user.email },
+    user: { id: user.id, email: user.email, is_admin: user.is_admin },
   });
 });
 
 export const getMe = asyncHandler(async (req, res) => {
-  const users = await db.query('SELECT id, email, created_at FROM users WHERE id = ?', [req.user.userId]);
+  const users = await db.query('SELECT id, email, created_at, is_admin FROM users WHERE id = ?', [req.user.userId]);
   
   if (users.length === 0) {
     return res.status(404).json({ message: 'User not found' });

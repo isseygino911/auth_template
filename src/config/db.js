@@ -15,8 +15,20 @@ const pool = mysql.createPool({
 
 export const db = {
   query: async (sql, params) => {
-    const [rows] = await pool.execute(sql, params);
-    return rows;
+    const [result] = await pool.execute(sql, params);
+    // Return result directly (works for both SELECT and INSERT/UPDATE)
+    return result;
+  },
+  getConnection: async () => {
+    const connection = await pool.getConnection();
+    
+    // Add custom query method to the connection
+    connection.query = async (sql, params) => {
+      const [result] = await connection.execute(sql, params);
+      return result;
+    };
+    
+    return connection;
   },
   pool,
 };
