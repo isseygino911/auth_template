@@ -12,12 +12,13 @@ import {
   updateOrderStatus,
   getDashboardStats,
 } from '../controllers/adminController.js';
-import { authMiddleware } from '../middleware/auth.js';
+import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// All admin routes require authentication
+// All admin routes require authentication AND admin privileges
 router.use(authMiddleware);
+router.use(adminMiddleware);
 
 // Dashboard stats
 router.get('/dashboard', getDashboardStats);
