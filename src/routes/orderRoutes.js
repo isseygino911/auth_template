@@ -2,6 +2,7 @@ import express from 'express';
 import { db } from '../config/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
+import { getPresignedUrl } from '../config/s3.js';
 
 const router = express.Router();
 
@@ -98,15 +99,32 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
     `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
     [userId]
   );
-  const orders = normalizeResult(result);
+  let orders = normalizeResult(result);
   
-  // Parse shipping address for each order
-  const ordersWithParsedAddress = orders.map(order => ({
-    ...order,
-    shipping_address: JSON.parse(order.shipping_address || '{}'),
-  }));
+  // For each order, get the first item's image
+  orders = await Promise.all(
+    orders.map(async (order) => {
+      const itemResult = await db.query(
+        `SELECT p.image_url, p.name 
+         FROM order_items oi 
+         JOIN products p ON oi.product_id = p.id 
+         WHERE oi.order_id = ? 
+         LIMIT 1`,
+        [order.id]
+      );
+      const items = normalizeResult(itemResult);
+      const firstItem = items[0];
+      
+      return {
+        ...order,
+        shipping_address: JSON.parse(order.shipping_address || '{}'),
+        image_url: firstItem?.image_url ? await getPresignedUrl(firstItem.image_url, 3600) : null,
+        product_name: firstItem?.name || null,
+      };
+    })
+  );
   
-  res.json({ orders: ordersWithParsedAddress });
+  res.json({ orders });
 }));
 
 // Get current user's orders (alternative path)
@@ -117,15 +135,32 @@ router.get('/my-orders', authMiddleware, asyncHandler(async (req, res) => {
     `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
     [userId]
   );
-  const orders = normalizeResult(result);
+  let orders = normalizeResult(result);
   
-  // Parse shipping address for each order
-  const ordersWithParsedAddress = orders.map(order => ({
-    ...order,
-    shipping_address: JSON.parse(order.shipping_address || '{}'),
-  }));
+  // For each order, get the first item's image
+  orders = await Promise.all(
+    orders.map(async (order) => {
+      const itemResult = await db.query(
+        `SELECT p.image_url, p.name 
+         FROM order_items oi 
+         JOIN products p ON oi.product_id = p.id 
+         WHERE oi.order_id = ? 
+         LIMIT 1`,
+        [order.id]
+      );
+      const items = normalizeResult(itemResult);
+      const firstItem = items[0];
+      
+      return {
+        ...order,
+        shipping_address: JSON.parse(order.shipping_address || '{}'),
+        image_url: firstItem?.image_url ? await getPresignedUrl(firstItem.image_url, 3600) : null,
+        product_name: firstItem?.name || null,
+      };
+    })
+  );
   
-  res.json({ orders: ordersWithParsedAddress });
+  res.json({ orders });
 }));
 
 // Get single order (requires authentication)
@@ -153,7 +188,15 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
      WHERE oi.order_id = ?`,
     [id]
   );
-  const items = normalizeResult(itemsResult);
+  let items = normalizeResult(itemsResult);
+  
+  // Generate presigned URLs for item images
+  items = await Promise.all(
+    items.map(async (item) => ({
+      ...item,
+      image_url: item.image_url ? await getPresignedUrl(item.image_url, 3600) : null,
+    }))
+  );
   
   res.json({
     order: {

@@ -428,7 +428,15 @@ export const getOrder = asyncHandler(async (req, res) => {
      WHERE oi.order_id = ?`,
     [id]
   );
-  const items = normalizeResult(itemResult);
+  let items = normalizeResult(itemResult);
+  
+  // Generate presigned URLs for item images
+  items = await Promise.all(
+    items.map(async (item) => ({
+      ...item,
+      image_url: item.image_url ? await getPresignedUrl(item.image_url, 3600) : null,
+    }))
+  );
   
   res.json({ 
     order: orders[0],
