@@ -22,7 +22,7 @@ const generateOrderNumber = () => {
 // Create a new order (requires authentication)
 router.post('/', authMiddleware, asyncHandler(async (req, res) => {
   const { items, shipping_address, total_amount } = req.body;
-  const userId = req.user.id;
+  const userId = req.user.userId;
   
   if (!items || !Array.isArray(items) || items.length === 0) {
     return res.status(400).json({ message: 'Order items are required' });
@@ -89,9 +89,29 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
   }
 }));
 
-// Get user's orders (requires authentication)
+// Get current user's orders (requires authentication)
+// Alias for /my-orders, also available at root path for convenience
+router.get('/', authMiddleware, asyncHandler(async (req, res) => {
+  const userId = req.user.userId;
+  
+  const result = await db.query(
+    `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
+    [userId]
+  );
+  const orders = normalizeResult(result);
+  
+  // Parse shipping address for each order
+  const ordersWithParsedAddress = orders.map(order => ({
+    ...order,
+    shipping_address: JSON.parse(order.shipping_address || '{}'),
+  }));
+  
+  res.json({ orders: ordersWithParsedAddress });
+}));
+
+// Get current user's orders (alternative path)
 router.get('/my-orders', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user.userId;
   
   const result = await db.query(
     `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
@@ -111,7 +131,7 @@ router.get('/my-orders', authMiddleware, asyncHandler(async (req, res) => {
 // Get single order (requires authentication)
 router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const userId = req.user.id;
+  const userId = req.user.userId;
   
   const orderResult = await db.query(
     `SELECT * FROM orders WHERE id = ? AND user_id = ?`,
