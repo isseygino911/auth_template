@@ -18,6 +18,8 @@ app.use(helmet());
 const allowedOrigins = [
   'http://localhost:5173',
   'https://ophieliu.com',
+  'https://www.ophieliu.com',
+  'https://api.ophieliu.com',
   process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
@@ -25,8 +27,9 @@ app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, curl, etc.)
     if (!origin) return callback(null, true);
+    console.log('CORS check - origin:', origin, 'allowed:', allowedOrigins);
     if (allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
+    callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
 }));
