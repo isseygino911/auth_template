@@ -17,7 +17,7 @@ const app = express();
 app.use(helmet());
 const allowedOrigins = [
   'http://localhost:5173',
-  'https://powderblue-dugong-803612.hostingersite.com',
+  'https://ophieliu.com',
   process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
