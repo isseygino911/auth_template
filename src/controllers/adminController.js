@@ -2,22 +2,7 @@ import { db } from '../config/db.js';
 import { generateUploadUrl, generateViewUrl, deleteObject, getPresignedUrl, extractS3Key } from '../config/s3.js';
 import { asyncHandler } from '../middleware/error.js';
 import { randomUUID } from 'crypto';
-
-// Helper to generate order number
-const generateOrderNumber = () => {
-  return 'ORD-' + Date.now().toString(36).toUpperCase();
-};
-
-// Helper to normalize query results to array
-const normalizeResult = (result) => {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === 'object') {
-    if (result.id !== undefined || result.name !== undefined || result.image_url !== undefined) {
-      return [result];
-    }
-  }
-  return [];
-};
+import { normalizeResult, generateOrderNumber } from '../utils/helpers.js';
 
 // Helper to convert product images to presigned URLs
 const convertProductImagesToPresigned = async (product) => {

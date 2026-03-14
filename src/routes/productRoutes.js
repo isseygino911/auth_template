@@ -2,21 +2,9 @@ import express from 'express';
 import { db } from '../config/db.js';
 import { getPresignedUrl } from '../config/s3.js';
 import { asyncHandler } from '../middleware/error.js';
+import { normalizeResult } from '../utils/helpers.js';
 
 const router = express.Router();
-
-// Helper to normalize query results to array
-const normalizeResult = (result) => {
-  if (Array.isArray(result)) return result;
-  // If it's a single object (like from a SELECT), wrap in array
-  if (result && typeof result === 'object') {
-    // Check if it has row-like properties
-    if (result.id !== undefined || result.name !== undefined || result.image_url !== undefined) {
-      return [result];
-    }
-  }
-  return [];
-};
 
 // Helper to convert product image to presigned URL
 const convertProductImage = async (product) => {

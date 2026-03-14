@@ -3,22 +3,9 @@ import { db } from '../config/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
 import { getPresignedUrl } from '../config/s3.js';
+import { normalizeResult, generateOrderNumber } from '../utils/helpers.js';
 
 const router = express.Router();
-
-// Helper to normalize query results
-const normalizeResult = (result) => {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === 'object') {
-    if (result.id !== undefined) return [result];
-  }
-  return [];
-};
-
-// Helper to generate order number
-const generateOrderNumber = () => {
-  return 'ORD-' + Date.now().toString(36).toUpperCase();
-};
 
 // Create a new order (requires authentication)
 router.post('/', authMiddleware, asyncHandler(async (req, res) => {
@@ -91,44 +78,7 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
 }));
 
 // Get current user's orders (requires authentication)
-// Alias for /my-orders, also available at root path for convenience
 router.get('/', authMiddleware, asyncHandler(async (req, res) => {
-  const userId = req.user.userId;
-  
-  const result = await db.query(
-    `SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC`,
-    [userId]
-  );
-  let orders = normalizeResult(result);
-  
-  // For each order, get the first item's image
-  orders = await Promise.all(
-    orders.map(async (order) => {
-      const itemResult = await db.query(
-        `SELECT p.image_url, p.name 
-         FROM order_items oi 
-         JOIN products p ON oi.product_id = p.id 
-         WHERE oi.order_id = ? 
-         LIMIT 1`,
-        [order.id]
-      );
-      const items = normalizeResult(itemResult);
-      const firstItem = items[0];
-      
-      return {
-        ...order,
-        shipping_address: JSON.parse(order.shipping_address || '{}'),
-        image_url: firstItem?.image_url ? await getPresignedUrl(firstItem.image_url, 3600) : null,
-        product_name: firstItem?.name || null,
-      };
-    })
-  );
-  
-  res.json({ orders });
-}));
-
-// Get current user's orders (alternative path)
-router.get('/my-orders', authMiddleware, asyncHandler(async (req, res) => {
   const userId = req.user.userId;
   
   const result = await db.query(

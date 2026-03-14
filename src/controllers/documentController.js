@@ -1,24 +1,7 @@
 import { db } from '../config/db.js';
 import { generateUploadUrl, deleteObject, getPresignedUrl } from '../config/s3.js';
 import { asyncHandler } from '../middleware/error.js';
-
-// Helper to normalize query results to array
-const normalizeResult = (result) => {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === 'object') {
-    if (result.id !== undefined) return [result];
-  }
-  return [];
-};
-
-// Helper to format file size
-const formatFileSize = (bytes) => {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-};
+import { normalizeResult, formatFileSize } from '../utils/helpers.js';
 
 // ==================== FOLDERS ====================
 

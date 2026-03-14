@@ -2,17 +2,9 @@ import express from 'express';
 import { db } from '../config/db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { asyncHandler } from '../middleware/error.js';
+import { normalizeResult } from '../utils/helpers.js';
 
 const router = express.Router();
-
-// Helper to normalize query results
-const normalizeResult = (result) => {
-  if (Array.isArray(result)) return result;
-  if (result && typeof result === 'object' && result.id !== undefined) {
-    return [result];
-  }
-  return [];
-};
 
 // Get all addresses for current user
 router.get('/', authMiddleware, asyncHandler(async (req, res) => {
