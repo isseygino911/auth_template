@@ -15,8 +15,19 @@ import { errorHandler } from './middleware/error.js';
 const app = express();
 
 app.use(helmet());
+const allowedOrigins = [
+  'http://localhost:5173',
+  'https://powderblue-dugong-803612.hostingersite.com',
+  process.env.CORS_ORIGIN,
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
   credentials: true,
 }));
 
