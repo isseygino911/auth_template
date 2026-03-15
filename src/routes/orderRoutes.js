@@ -56,39 +56,44 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
     // 1. Validate stock availability FIRST (before any inserts)
     // Use FOR UPDATE to lock rows and prevent race conditions
     for (const item of items) {
-      const [stockResult] = await connection.query(
+      const [productRow] = await connection.query(
         `SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE`,
         [item.product_id]
       );
-      const availableStock = stockResult?.stock_quantity || 0;
-      
+      const availableStock = productRow?.stock_quantity || 0;
+
       if (availableStock < item.quantity) {
         await connection.rollback();
-        return res.status(400).json({ 
-          message: `Insufficient stock for product. Available: ${availableStock}, Requested: ${item.quantity}` 
+        return res.status(400).json({
+          message: `Insufficient stock for product. Available: ${availableStock}, Requested: ${item.quantity}`
         });
       }
     }
-    
+
     // 2. Generate order number and create order
     const orderNumber = generateOrderNumber();
-    
+
     const orderResult = await connection.query(
-      `INSERT INTO orders (order_number, user_id, subtotal, tax_amount, total_amount, status, shipping_address) 
+      `INSERT INTO orders (order_number, user_id, subtotal, tax_amount, total_amount, status, shipping_address)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [orderNumber, userId, calculatedSubtotal, calculatedTax, calculatedTotal, 'pending', JSON.stringify(shipping_address)]
     );
-    
+
     const orderId = orderResult.insertId;
-    
-    // 3. Create order items and decrement stock
+
+    // 3. Create order items and decrement stock (snapshot product name for historical integrity)
     for (const item of items) {
-      await connection.query(
-        `INSERT INTO order_items (order_id, product_id, quantity, price_at_time) 
-         VALUES (?, ?, ?, ?)`,
-        [orderId, item.product_id, item.quantity, item.price]
+      const [productRow] = await connection.query(
+        `SELECT stock_quantity, name FROM products WHERE id = ? FOR UPDATE`,
+        [item.product_id]
       );
-      
+
+      await connection.query(
+        `INSERT INTO order_items (order_id, product_id, quantity, price_at_time, product_name_snapshot)
+         VALUES (?, ?, ?, ?, ?)`,
+        [orderId, item.product_id, item.quantity, item.price, productRow?.name || '']
+      );
+
       // Decrement stock (already validated above)
       await connection.query(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?`,
@@ -135,10 +140,10 @@ router.get('/', authMiddleware, asyncHandler(async (req, res) => {
   orders = await Promise.all(
     orders.map(async (order) => {
       const itemResult = await db.query(
-        `SELECT p.image_url, p.name 
-         FROM order_items oi 
-         JOIN products p ON oi.product_id = p.id 
-         WHERE oi.order_id = ? 
+        `SELECT COALESCE(NULLIF(oi.product_name_snapshot, ''), p.name) AS name, p.image_url
+         FROM order_items oi
+         LEFT JOIN products p ON oi.product_id = p.id
+         WHERE oi.order_id = ?
          LIMIT 1`,
         [order.id]
       );
@@ -176,9 +181,9 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
   
   // Get order items with product details
   const itemsResult = await db.query(
-    `SELECT oi.*, p.name, p.image_url 
-     FROM order_items oi 
-     JOIN products p ON oi.product_id = p.id 
+    `SELECT oi.*, COALESCE(NULLIF(oi.product_name_snapshot, ''), p.name) AS name, p.image_url
+     FROM order_items oi
+     LEFT JOIN products p ON oi.product_id = p.id
      WHERE oi.order_id = ?`,
     [id]
   );

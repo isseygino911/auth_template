@@ -430,9 +430,9 @@ export const getOrder = asyncHandler(async (req, res) => {
   }
   
   const itemResult = await db.query(
-    `SELECT oi.*, p.name, p.image_url
+    `SELECT oi.*, COALESCE(NULLIF(oi.product_name_snapshot, ''), p.name) AS product_name, p.image_url
      FROM order_items oi
-     JOIN products p ON oi.product_id = p.id
+     LEFT JOIN products p ON oi.product_id = p.id
      WHERE oi.order_id = ?`,
     [id]
   );
