@@ -16,14 +16,14 @@ export const initializeDatabase = async () => {
     
     // 2. Ensure orders table has subtotal and tax_amount columns
     // Check if columns exist and add them if not
-    const [columns] = await db.query(`
+    const columns = await db.query(`
       SELECT COLUMN_NAME 
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = 'orders'
     `);
     
-    const columnNames = columns.map(c => c.COLUMN_NAME);
+    const columnNames = Array.isArray(columns) ? columns.map(c => c.COLUMN_NAME) : [];
     
     if (!columnNames.includes('subtotal')) {
       await db.query(`
