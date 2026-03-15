@@ -20,6 +20,17 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Shipping address is required' });
   }
   
+  // Validate total_amount matches calculated total from items
+  const calculatedTotal = items.reduce(
+    (sum, item) => sum + (item.price * item.quantity), 0
+  );
+  
+  if (Math.abs(calculatedTotal - total_amount) > 0.01) {
+    return res.status(400).json({ 
+      message: 'Total amount mismatch. Please refresh and try again.' 
+    });
+  }
+  
   const connection = await db.getConnection();
   
   try {

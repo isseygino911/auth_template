@@ -208,6 +208,16 @@ export const updateProduct = asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
     
+    // Get old images for S3 cleanup (before DB delete)
+    let oldImagesToDelete = [];
+    if (images && images.length > 0) {
+      const oldImagesResult = await connection.query(
+        'SELECT image_url FROM product_images WHERE product_id = ?',
+        [productId]
+      );
+      oldImagesToDelete = normalizeResult(oldImagesResult).map(img => img.image_url);
+    }
+    
     // Update product
     await connection.query(
       `UPDATE products SET 
@@ -229,7 +239,7 @@ export const updateProduct = asyncHandler(async (req, res) => {
       const validImages = images.filter(img => img && typeof img === 'string' && img.trim() !== '');
       
       if (validImages.length > 0) {
-        // Delete old images
+        // Delete old images from DB
         await connection.query('DELETE FROM product_images WHERE product_id = ?', [productId]);
         
         // Insert new images
@@ -243,6 +253,19 @@ export const updateProduct = asyncHandler(async (req, res) => {
     }
     
     await connection.commit();
+    
+    // Delete old images from S3 (after successful DB commit)
+    if (oldImagesToDelete.length > 0) {
+      for (const imageUrl of oldImagesToDelete) {
+        try {
+          const key = extractS3Key(imageUrl);
+          if (key) await deleteObject(key);
+        } catch (err) {
+          console.error('Failed to delete old image from S3:', err.message);
+          // Don't throw - DB update succeeded
+        }
+      }
+    }
     
     const result = await db.query('SELECT * FROM products WHERE id = ?', [productId]);
     const product = normalizeResult(result);
