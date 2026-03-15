@@ -539,3 +539,120 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     ordersByStatus
   });
 });
+
+// ==================== CUSTOMERS ====================
+
+// Get all customers with order statistics
+export const getCustomers = asyncHandler(async (req, res) => {
+  // Get all non-admin users with their order stats
+  const customersResult = await db.query(`
+    SELECT 
+      u.id, 
+      u.email, 
+      u.created_at,
+      COUNT(DISTINCT o.id) as order_count,
+      COALESCE(SUM(o.total_amount), 0) as total_spent
+    FROM users u
+    LEFT JOIN orders o ON u.id = o.user_id
+    WHERE u.is_admin = FALSE OR u.is_admin = 0
+    GROUP BY u.id
+    ORDER BY u.created_at DESC
+  `);
+  
+  let customers = normalizeResult(customersResult);
+  
+  // For each customer, get their most bought product
+  customers = await Promise.all(
+    customers.map(async (customer) => {
+      if (customer.order_count === 0) {
+        return {
+          ...customer,
+          top_product_name: null,
+          top_product_count: 0
+        };
+      }
+      
+      // Get most bought product for this customer
+      const topProductResult = await db.query(`
+        SELECT 
+          COALESCE(NULLIF(oi.product_name_snapshot, ''), p.name) as product_name,
+          SUM(oi.quantity) as purchase_count
+        FROM order_items oi
+        JOIN orders o ON oi.order_id = o.id
+        LEFT JOIN products p ON oi.product_id = p.id
+        WHERE o.user_id = ?
+        GROUP BY oi.product_id, oi.product_name_snapshot, p.name
+        ORDER BY SUM(oi.quantity) DESC
+        LIMIT 1
+      `, [customer.id]);
+      
+      const topProducts = normalizeResult(topProductResult);
+      const topProduct = topProducts[0];
+      
+      return {
+        ...customer,
+        top_product_name: topProduct?.product_name || null,
+        top_product_count: topProduct ? parseInt(topProduct.purchase_count) : 0
+      };
+    })
+  );
+  
+  res.json({ customers });
+});
+
+// Get single customer with full details
+export const getCustomer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  
+  // Get customer basic info
+  const customerResult = await db.query(`
+    SELECT u.id, u.email, u.created_at
+    FROM users u
+    WHERE u.id = ? AND (u.is_admin = FALSE OR u.is_admin = 0)
+  `, [id]);
+  
+  const customers = normalizeResult(customerResult);
+  
+  if (customers.length === 0) {
+    return res.status(404).json({ message: 'Customer not found' });
+  }
+  
+  const customer = customers[0];
+  
+  // Get all orders for this customer
+  const ordersResult = await db.query(`
+    SELECT * FROM orders 
+    WHERE user_id = ? 
+    ORDER BY created_at DESC
+  `, [id]);
+  
+  const orders = normalizeResult(ordersResult);
+  
+  // Get top products for this customer
+  const topProductsResult = await db.query(`
+    SELECT 
+      COALESCE(NULLIF(oi.product_name_snapshot, ''), p.name) as product_name,
+      SUM(oi.quantity) as purchase_count,
+      SUM(oi.quantity * oi.price_at_time) as total_spent_on_product
+    FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id
+    LEFT JOIN products p ON oi.product_id = p.id
+    WHERE o.user_id = ?
+    GROUP BY oi.product_id, oi.product_name_snapshot, p.name
+    ORDER BY SUM(oi.quantity) DESC
+    LIMIT 5
+  `, [id]);
+  
+  const topProducts = normalizeResult(topProductsResult);
+  
+  res.json({
+    customer: {
+      ...customer,
+      orders: orders.map(o => ({
+        ...o,
+        shipping_address: JSON.parse(o.shipping_address || '{}')
+      })),
+      top_products: topProducts
+    }
+  });
+});

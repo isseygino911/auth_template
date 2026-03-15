@@ -11,6 +11,8 @@ import {
   getOrder,
   updateOrderStatus,
   getDashboardStats,
+  getCustomers,
+  getCustomer,
 } from '../controllers/adminController.js';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 
@@ -36,5 +38,9 @@ router.delete('/products/:id', deleteProduct);
 router.get('/orders', getOrders);
 router.get('/orders/:id', getOrder);
 router.put('/orders/:id/status', updateOrderStatus);
+
+// Customers
+router.get('/customers', getCustomers);
+router.get('/customers/:id', getCustomer);
 
 export default router;
