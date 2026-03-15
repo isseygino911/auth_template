@@ -434,6 +434,14 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
   
+  // Validate status against allowed values
+  const VALID_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
+  if (!VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ 
+      message: `Invalid order status. Must be one of: ${VALID_STATUSES.join(', ')}` 
+    });
+  }
+  
   await db.query(
     'UPDATE orders SET status = ? WHERE id = ?',
     [status, id]
@@ -452,37 +460,34 @@ export const updateOrderStatus = asyncHandler(async (req, res) => {
 
 // Get dashboard stats
 export const getDashboardStats = asyncHandler(async (req, res) => {
-  // Total products
-  const productsResult = await db.query('SELECT COUNT(*) as count FROM products');
+  // Run count queries in parallel
+  const [
+    productsResult,
+    ordersResult,
+    revenueResult,
+    customersResult
+  ] = await Promise.all([
+    db.query('SELECT COUNT(*) as count FROM products'),
+    db.query('SELECT COUNT(*) as count FROM orders'),
+    db.query("SELECT SUM(total_amount) as total FROM orders WHERE status != 'cancelled'"),
+    db.query("SELECT COUNT(*) as count FROM users WHERE is_admin = 0 OR is_admin = false")
+  ]);
   
-  // Total orders
-  const ordersResult = await db.query('SELECT COUNT(*) as count FROM orders');
-  
-  // Total revenue
-  const revenueResult = await db.query(
-    "SELECT SUM(total_amount) as total FROM orders WHERE status != 'cancelled'"
-  );
-  
-  // Total customers (non-admin users)
-  const customersResult = await db.query(
-    "SELECT COUNT(*) as count FROM users WHERE is_admin = 0 OR is_admin = false"
-  );
-  
-  // Recent orders
-  const recentOrdersResult = await db.query(
-    `SELECT o.*, u.email as customer_email
-     FROM orders o
-     JOIN users u ON o.user_id = u.id
-     ORDER BY o.created_at DESC
-     LIMIT 5`
-  );
-  
-  // Orders by status
-  const ordersByStatusResult = await db.query(
-    `SELECT status, COUNT(*) as count
-     FROM orders
-     GROUP BY status`
-  );
+  // Run data queries in parallel
+  const [recentOrdersResult, ordersByStatusResult] = await Promise.all([
+    db.query(
+      `SELECT o.*, u.email as customer_email
+       FROM orders o
+       JOIN users u ON o.user_id = u.id
+       ORDER BY o.created_at DESC
+       LIMIT 5`
+    ),
+    db.query(
+      `SELECT status, COUNT(*) as count
+       FROM orders
+       GROUP BY status`
+    )
+  ]);
   
   // Handle array or object result from db.query
   const getCount = (result) => {

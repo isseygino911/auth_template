@@ -25,10 +25,25 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
     
-    // Generate order number
-    const orderNumber = generateOrderNumber();
+    // 1. Validate stock availability FIRST (before any inserts)
+    // Use FOR UPDATE to lock rows and prevent race conditions
+    for (const item of items) {
+      const [stockResult] = await connection.query(
+        `SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE`,
+        [item.product_id]
+      );
+      const availableStock = stockResult?.stock_quantity || 0;
+      
+      if (availableStock < item.quantity) {
+        await connection.rollback();
+        return res.status(400).json({ 
+          message: `Insufficient stock for product. Available: ${availableStock}, Requested: ${item.quantity}` 
+        });
+      }
+    }
     
-    // Create order
+    // 2. Generate order number and create order
+    const orderNumber = generateOrderNumber();
     const orderResult = await connection.query(
       `INSERT INTO orders (order_number, user_id, total_amount, status, shipping_address) 
        VALUES (?, ?, ?, ?, ?)`,
@@ -37,7 +52,7 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
     
     const orderId = orderResult.insertId;
     
-    // Create order items
+    // 3. Create order items and decrement stock
     for (const item of items) {
       await connection.query(
         `INSERT INTO order_items (order_id, product_id, quantity, price_at_time) 
@@ -45,7 +60,7 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
         [orderId, item.product_id, item.quantity, item.price]
       );
       
-      // Update product stock
+      // Decrement stock (already validated above)
       await connection.query(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?`,
         [item.quantity, item.product_id]

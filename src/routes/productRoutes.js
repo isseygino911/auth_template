@@ -63,11 +63,8 @@ router.get('/', asyncHandler(async (req, res) => {
   
   sql += ' ORDER BY created_at DESC';
   
-  console.log('DEBUG: Fetching products with SQL:', sql, 'params:', params);
-  
   const products = await fetchProductsWithImages(sql, params);
   
-  console.log('DEBUG: Returning', products.length, 'products');
   res.json({ products });
 }));
 
