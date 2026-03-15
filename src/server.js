@@ -10,7 +10,9 @@ import productRoutes from './routes/productRoutes.js';
 import orderRoutes from './routes/orderRoutes.js';
 import addressRoutes from './routes/addressRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
+import settingsRoutes from './routes/settingsRoutes.js';
 import { errorHandler } from './middleware/error.js';
+import { initializeDatabase } from './config/initDb.js';
 
 const app = express();
 
@@ -47,6 +49,12 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/documents', documentRoutes);
+app.use('/api/settings', settingsRoutes);
+
+// Initialize database (create tables, add missing columns, etc.)
+initializeDatabase().catch(err => {
+  console.error('Failed to initialize database:', err);
+});
 
 // 404 handler
 app.use((req, res) => {

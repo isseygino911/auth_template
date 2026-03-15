@@ -9,7 +9,7 @@ const router = express.Router();
 
 // Create a new order (requires authentication)
 router.post('/', authMiddleware, asyncHandler(async (req, res) => {
-  const { items, shipping_address, total_amount } = req.body;
+  const { items, shipping_address, total_amount, subtotal, tax_amount } = req.body;
   const userId = req.user.userId;
   
   if (!items || !Array.isArray(items) || items.length === 0) {
@@ -20,12 +20,29 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Shipping address is required' });
   }
   
-  // Validate total_amount matches calculated total from items
-  const calculatedTotal = items.reduce(
+  // Get tax rate from settings
+  const taxResult = await db.query('SELECT value FROM settings WHERE `key` = ?', ['tax_rate']);
+  const taxSettings = normalizeResult(taxResult);
+  const taxRate = taxSettings.length > 0 ? parseFloat(taxSettings[0].value) : 0.08;
+  
+  // Validate subtotal matches calculated total from items
+  const calculatedSubtotal = items.reduce(
     (sum, item) => sum + (item.price * item.quantity), 0
   );
   
-  if (Math.abs(calculatedTotal - total_amount) > 0.01) {
+  // Validate submitted subtotal
+  if (Math.abs(calculatedSubtotal - (subtotal || 0)) > 0.01) {
+    return res.status(400).json({ 
+      message: 'Subtotal mismatch. Please refresh and try again.' 
+    });
+  }
+  
+  // Calculate expected tax and total
+  const calculatedTax = calculatedSubtotal * taxRate;
+  const calculatedTotal = calculatedSubtotal + calculatedTax;
+  
+  // Validate submitted total
+  if (Math.abs(calculatedTotal - (total_amount || 0)) > 0.01) {
     return res.status(400).json({ 
       message: 'Total amount mismatch. Please refresh and try again.' 
     });
@@ -55,10 +72,11 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
     
     // 2. Generate order number and create order
     const orderNumber = generateOrderNumber();
+    
     const orderResult = await connection.query(
-      `INSERT INTO orders (order_number, user_id, total_amount, status, shipping_address) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [orderNumber, userId, total_amount, 'pending', JSON.stringify(shipping_address)]
+      `INSERT INTO orders (order_number, user_id, subtotal, tax_amount, total_amount, status, shipping_address) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [orderNumber, userId, calculatedSubtotal, calculatedTax, calculatedTotal, 'pending', JSON.stringify(shipping_address)]
     );
     
     const orderId = orderResult.insertId;
