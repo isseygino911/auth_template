@@ -25,7 +25,10 @@ const convertProductsImagesToPresigned = async (products) => {
 export const getProducts = asyncHandler(async (req, res) => {
   const { category, status, search } = req.query;
   
-  let sql = 'SELECT * FROM products WHERE 1=1';
+  let sql = `SELECT id, uuid, name, model_number, description, specifications, 
+                    price, original_price, category, image_url, stock_quantity, status,
+                    metadata, created_at, updated_at 
+             FROM products WHERE 1=1`;
   const params = [];
   
   if (category && category !== 'All') {
@@ -76,7 +79,10 @@ export const getProduct = asyncHandler(async (req, res) => {
   const isUUID = id.includes('-') && id.length === 36;
   
   const result = await db.query(
-    `SELECT * FROM products WHERE ${isUUID ? 'uuid' : 'id'} = ?`,
+    `SELECT id, uuid, name, model_number, description, specifications, 
+            price, original_price, category, image_url, stock_quantity, status,
+            metadata, created_at, updated_at 
+     FROM products WHERE ${isUUID ? 'uuid' : 'id'} = ?`,
     [id]
   );
   const products = normalizeResult(result);
@@ -125,7 +131,20 @@ export const getProduct = asyncHandler(async (req, res) => {
 
 // Create product with images
 export const createProduct = asyncHandler(async (req, res) => {
-  const { name, description, price, category, image_url, images, stock_quantity, status } = req.body;
+  const { 
+    name, 
+    model_number,
+    description, 
+    specifications,
+    price, 
+    original_price,
+    category, 
+    image_url, 
+    images, 
+    stock_quantity, 
+    status,
+    metadata
+  } = req.body;
   
   if (!name || !price || !category) {
     return res.status(400).json({ message: 'Name, price, and category are required' });
@@ -146,12 +165,33 @@ export const createProduct = asyncHandler(async (req, res) => {
     // Generate UUID for product
     const uuid = randomUUID();
     
+    // Build insert query dynamically based on available fields
+    const fields = ['uuid', 'name', 'description', 'price', 'category', 'image_url', 'stock_quantity', 'status'];
+    const values = [uuid, name, description || '', price, category, validImages[0], stock_quantity || 0, status || 'active'];
+    
+    // Add optional fields if provided
+    if (model_number !== undefined) {
+      fields.push('model_number');
+      values.push(model_number);
+    }
+    if (original_price !== undefined) {
+      fields.push('original_price');
+      values.push(original_price);
+    }
+    if (specifications !== undefined) {
+      fields.push('specifications');
+      values.push(typeof specifications === 'string' ? specifications : JSON.stringify(specifications));
+    }
+    if (metadata !== undefined) {
+      fields.push('metadata');
+      values.push(typeof metadata === 'string' ? metadata : JSON.stringify(metadata));
+    }
+    
+    const placeholders = fields.map(() => '?').join(', ');
+    const insertSql = `INSERT INTO products (${fields.join(', ')}) VALUES (${placeholders})`;
+    
     // Insert product
-    const productResult = await connection.query(
-      `INSERT INTO products (uuid, name, description, price, category, image_url, stock_quantity, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [uuid, name, description || '', price, category, validImages[0], stock_quantity || 0, status || 'active']
-    );
+    const productResult = await connection.query(insertSql, values);
     
     const productId = productResult.insertId;
     
@@ -188,7 +228,20 @@ export const createProduct = asyncHandler(async (req, res) => {
 // Update product
 export const updateProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { name, description, price, category, image_url, images, stock_quantity, status } = req.body;
+  const { 
+    name, 
+    model_number,
+    description, 
+    specifications,
+    price, 
+    original_price,
+    category, 
+    image_url, 
+    images, 
+    stock_quantity, 
+    status,
+    metadata
+  } = req.body;
   
   // Check if id is a UUID format and get numeric ID
   const isUUID = id.includes('-') && id.length === 36;
@@ -208,35 +261,77 @@ export const updateProduct = asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
     
+    // Helper to extract base S3 URL (remove presigned query params)
+    const getBaseS3Url = (url) => {
+      if (!url) return url;
+      // If URL has query params (presigned URL), extract just the base URL
+      const queryIndex = url.indexOf('?');
+      return queryIndex > 0 ? url.substring(0, queryIndex) : url;
+    };
+    
+    // Clean up image URLs (remove presigned query params if present)
+    const cleanedImages = images ? images.map(getBaseS3Url) : undefined;
+    const cleanedImageUrl = image_url ? getBaseS3Url(image_url) : undefined;
+    
     // Get old images for S3 cleanup (before DB delete)
     let oldImagesToDelete = [];
-    if (images && images.length > 0) {
+    if (cleanedImages && cleanedImages.length > 0) {
       const oldImagesResult = await connection.query(
         'SELECT image_url FROM product_images WHERE product_id = ?',
         [productId]
       );
-      oldImagesToDelete = normalizeResult(oldImagesResult).map(img => img.image_url);
+      const oldImages = normalizeResult(oldImagesResult).map(img => img.image_url);
+      
+      // Only delete from S3 if the image is NOT in the new images list
+      // Compare base URLs to handle presigned vs non-presigned URLs
+      oldImagesToDelete = oldImages.filter(oldUrl => {
+        const cleanedOldUrl = getBaseS3Url(oldUrl);
+        return !cleanedImages.some(newUrl => getBaseS3Url(newUrl) === cleanedOldUrl);
+      });
     }
     
-    // Update product
-    await connection.query(
-      `UPDATE products SET 
-        name = ?, 
-        description = ?, 
-        price = ?, 
-        category = ?, 
-        image_url = ?,
-        stock_quantity = ?, 
-        status = ? 
-      WHERE id = ?`,
-      [name, description || '', price, category, images && images.length > 0 ? images[0] : image_url, 
-       stock_quantity || 0, status || 'active', productId]
-    );
+    // Build update query dynamically
+    const updateFields = [];
+    const updateValues = [];
+    
+    if (name !== undefined) { updateFields.push('name = ?'); updateValues.push(name); }
+    if (description !== undefined) { updateFields.push('description = ?'); updateValues.push(description || ''); }
+    if (price !== undefined) { updateFields.push('price = ?'); updateValues.push(price); }
+    if (original_price !== undefined) { updateFields.push('original_price = ?'); updateValues.push(original_price); }
+    if (category !== undefined) { updateFields.push('category = ?'); updateValues.push(category); }
+    if (model_number !== undefined) { updateFields.push('model_number = ?'); updateValues.push(model_number); }
+    if (specifications !== undefined) { 
+      updateFields.push('specifications = ?'); 
+      updateValues.push(typeof specifications === 'string' ? specifications : JSON.stringify(specifications));
+    }
+    if (metadata !== undefined) { 
+      updateFields.push('metadata = ?'); 
+      updateValues.push(typeof metadata === 'string' ? metadata : JSON.stringify(metadata));
+    }
+    if (stock_quantity !== undefined) { updateFields.push('stock_quantity = ?'); updateValues.push(stock_quantity); }
+    if (status !== undefined) { updateFields.push('status = ?'); updateValues.push(status); }
+    
+    // Always update image_url if images are provided
+    if (cleanedImages && cleanedImages.length > 0) {
+      updateFields.push('image_url = ?');
+      updateValues.push(cleanedImages[0]);
+    } else if (cleanedImageUrl !== undefined) {
+      updateFields.push('image_url = ?');
+      updateValues.push(cleanedImageUrl);
+    }
+    
+    // Add productId at the end
+    updateValues.push(productId);
+    
+    if (updateFields.length > 0) {
+      const updateSql = `UPDATE products SET ${updateFields.join(', ')} WHERE id = ?`;
+      await connection.query(updateSql, updateValues);
+    }
     
     // If new images provided, update product_images
-    if (images && images.length > 0) {
+    if (cleanedImages && cleanedImages.length > 0) {
       // Filter out null/empty image URLs
-      const validImages = images.filter(img => img && typeof img === 'string' && img.trim() !== '');
+      const validImages = cleanedImages.filter(img => img && typeof img === 'string' && img.trim() !== '');
       
       if (validImages.length > 0) {
         // Delete old images from DB
