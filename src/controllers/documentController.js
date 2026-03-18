@@ -117,6 +117,9 @@ export const deleteFolder = asyncHandler(async (req, res) => {
       "INSERT INTO document_folders (name, description, sort_order) VALUES ('Uncategorized', 'Documents without a specific category', 99)"
     );
     uncategorizedId = createResult.insertId;
+    if (!uncategorizedId) {
+      throw new Error('Failed to create Uncategorized folder');
+    }
   } else {
     uncategorizedId = uncategorizedFolders[0].id;
   }

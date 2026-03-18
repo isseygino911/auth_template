@@ -13,6 +13,7 @@ import {
   getDashboardStats,
   getCustomers,
   getCustomer,
+  getWishlistStats,
 } from '../controllers/adminController.js';
 import { authMiddleware, adminMiddleware } from '../middleware/auth.js';
 
@@ -42,5 +43,8 @@ router.put('/orders/:id/status', updateOrderStatus);
 // Customers
 router.get('/customers', getCustomers);
 router.get('/customers/:id', getCustomer);
+
+// Wishlist stats
+router.get('/wishlist-stats', getWishlistStats);
 
 export default router;

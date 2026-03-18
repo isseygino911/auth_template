@@ -23,7 +23,12 @@ const convertProductsImagesToPresigned = async (products) => {
 
 // Get all products with optional filters
 export const getProducts = asyncHandler(async (req, res) => {
-  const { category, status, search } = req.query;
+  const { category, status, search, sort = 'created_at', order = 'DESC' } = req.query;
+  
+  // Validate sort field to prevent SQL injection
+  const allowedSortFields = ['name', 'price', 'created_at', 'category', 'stock_quantity', 'status', 'updated_at'];
+  const sortField = allowedSortFields.includes(sort) ? sort : 'created_at';
+  const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   
   let sql = `SELECT id, uuid, name, model_number, description, specifications, 
                     price, original_price, category, image_url, stock_quantity, status,
@@ -46,7 +51,7 @@ export const getProducts = asyncHandler(async (req, res) => {
     params.push(`%${search}%`, `%${search}%`);
   }
   
-  sql += ' ORDER BY created_at DESC';
+  sql += ` ORDER BY ${sortField} ${sortOrder}`;
   
   const result = await db.query(sql, params);
   const products = normalizeResult(result);
@@ -74,14 +79,14 @@ export const getProducts = asyncHandler(async (req, res) => {
 // Get single product with all images
 export const getProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  
+
   // Check if id is a UUID format (contains hyphens and is 36 chars)
   const isUUID = id.includes('-') && id.length === 36;
-  
+
   const result = await db.query(
-    `SELECT id, uuid, name, model_number, description, specifications, 
+    `SELECT id, uuid, name, model_number, description, specifications,
             price, original_price, category, image_url, stock_quantity, status,
-            metadata, created_at, updated_at 
+            metadata, created_at, updated_at
      FROM products WHERE ${isUUID ? 'uuid' : 'id'} = ?`,
     [id]
   );
@@ -228,25 +233,25 @@ export const createProduct = asyncHandler(async (req, res) => {
 // Update product
 export const updateProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { 
-    name, 
+  const {
+    name,
     model_number,
-    description, 
+    description,
     specifications,
-    price, 
+    price,
     original_price,
-    category, 
-    image_url, 
-    images, 
-    stock_quantity, 
+    category,
+    image_url,
+    images,
+    stock_quantity,
     status,
     metadata
   } = req.body;
-  
+
   // Check if id is a UUID format and get numeric ID
   const isUUID = id.includes('-') && id.length === 36;
   let productId = id;
-  
+
   if (isUUID) {
     const uuidResult = await db.query('SELECT id FROM products WHERE uuid = ?', [id]);
     const uuidProducts = normalizeResult(uuidResult);
@@ -255,12 +260,12 @@ export const updateProduct = asyncHandler(async (req, res) => {
     }
     productId = uuidProducts[0].id;
   }
-  
+
   const connection = await db.getConnection();
-  
+
   try {
     await connection.beginTransaction();
-    
+
     // Helper to extract base S3 URL (remove presigned query params)
     const getBaseS3Url = (url) => {
       if (!url) return url;
@@ -381,11 +386,11 @@ export const updateProduct = asyncHandler(async (req, res) => {
 // Delete product and its images from S3
 export const deleteProduct = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  
+
   // Check if id is a UUID format and get numeric ID
   const isUUID = id.includes('-') && id.length === 36;
   let productId = id;
-  
+
   if (isUUID) {
     const uuidResult = await db.query('SELECT id FROM products WHERE uuid = ?', [id]);
     const uuidProducts = normalizeResult(uuidResult);
@@ -394,7 +399,7 @@ export const deleteProduct = asyncHandler(async (req, res) => {
     }
     productId = uuidProducts[0].id;
   }
-  
+
   // Get product to check for legacy image_url
   const productResult = await db.query('SELECT image_url FROM products WHERE id = ?', [productId]);
   const products = normalizeResult(productResult);
@@ -478,7 +483,12 @@ export const getCategories = asyncHandler(async (req, res) => {
 
 // Get all orders (admin)
 export const getOrders = asyncHandler(async (req, res) => {
-  const { status, search } = req.query;
+  const { status, search, sort = 'created_at', order = 'DESC' } = req.query;
+  
+  // Validate sort field to prevent SQL injection
+  const allowedSortFields = ['order_number', 'customer_email', 'total_amount', 'status', 'created_at'];
+  const sortField = allowedSortFields.includes(sort) ? sort : 'created_at';
+  const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   
   let sql = `
     SELECT o.*, u.email as customer_email, COUNT(oi.id) as item_count
@@ -499,7 +509,14 @@ export const getOrders = asyncHandler(async (req, res) => {
     params.push(`%${search}%`, `%${search}%`);
   }
   
-  sql += ' GROUP BY o.id ORDER BY o.created_at DESC';
+  sql += ' GROUP BY o.id';
+  
+  // Handle sorting - customer_email needs special handling since it's from joined table
+  if (sortField === 'customer_email') {
+    sql += ` ORDER BY u.email ${sortOrder}`;
+  } else {
+    sql += ` ORDER BY o.${sortField} ${sortOrder}`;
+  }
   
   const result = await db.query(sql, params);
   const orders = normalizeResult(result);
@@ -639,8 +656,15 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
 
 // Get all customers with order statistics
 export const getCustomers = asyncHandler(async (req, res) => {
+  const { sort = 'created_at', order = 'DESC' } = req.query;
+  
+  // Validate sort field to prevent SQL injection
+  const allowedSortFields = ['email', 'created_at', 'order_count', 'total_spent'];
+  const sortField = allowedSortFields.includes(sort) ? sort : 'created_at';
+  const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+  
   // Get all non-admin users with their order stats
-  const customersResult = await db.query(`
+  let sql = `
     SELECT 
       u.id, 
       u.email, 
@@ -651,8 +675,17 @@ export const getCustomers = asyncHandler(async (req, res) => {
     LEFT JOIN orders o ON u.id = o.user_id
     WHERE u.is_admin = FALSE OR u.is_admin = 0
     GROUP BY u.id
-    ORDER BY u.created_at DESC
-  `);
+  `;
+  
+  // Handle sorting
+  if (sortField === 'email' || sortField === 'created_at') {
+    sql += ` ORDER BY u.${sortField} ${sortOrder}`;
+  } else {
+    // For aggregated fields, use the alias
+    sql += ` ORDER BY ${sortField} ${sortOrder}`;
+  }
+  
+  const customersResult = await db.query(sql);
   
   let customers = normalizeResult(customersResult);
   
@@ -693,6 +726,40 @@ export const getCustomers = asyncHandler(async (req, res) => {
   );
   
   res.json({ customers });
+});
+
+// ==================== WISHLIST ====================
+
+// Get wishlist stats (products with wish counts)
+export const getWishlistStats = asyncHandler(async (req, res) => {
+  const result = await db.query(
+    `SELECT p.id AS product_id, p.name, p.category, p.price, p.image_url,
+            COUNT(w.id) AS wish_count
+     FROM products p
+     LEFT JOIN wishlists w ON p.id = w.product_id
+     GROUP BY p.id
+     HAVING wish_count > 0
+     ORDER BY wish_count DESC`
+  );
+  let items = normalizeResult(result);
+
+  items = await Promise.all(
+    items.map(async (item) => {
+      const imgResult = await db.query(
+        'SELECT image_url FROM product_images WHERE product_id = ? ORDER BY is_primary DESC, sort_order ASC LIMIT 1',
+        [item.product_id]
+      );
+      const imgs = normalizeResult(imgResult);
+      const imageUrl = imgs.length > 0 ? imgs[0].image_url : item.image_url;
+      return {
+        ...item,
+        wish_count: parseInt(item.wish_count, 10),
+        image_url: imageUrl ? await getPresignedUrl(imageUrl, 3600).catch(() => imageUrl) : null,
+      };
+    })
+  );
+
+  res.json({ items });
 });
 
 // Get single customer with full details

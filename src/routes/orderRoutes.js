@@ -60,6 +60,10 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
         `SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE`,
         [item.product_id]
       );
+      if (!productRow) {
+        await connection.rollback();
+        return res.status(400).json({ message: `Product ID ${item.product_id} not found` });
+      }
       const availableStock = productRow?.stock_quantity || 0;
 
       if (availableStock < item.quantity) {
@@ -87,6 +91,10 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
         `SELECT stock_quantity, name FROM products WHERE id = ? FOR UPDATE`,
         [item.product_id]
       );
+      if (!productRow) {
+        await connection.rollback();
+        return res.status(400).json({ message: `Product ID ${item.product_id} not found` });
+      }
 
       await connection.query(
         `INSERT INTO order_items (order_id, product_id, quantity, price_at_time, product_name_snapshot)

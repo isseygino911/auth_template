@@ -11,6 +11,7 @@ import orderRoutes from './routes/orderRoutes.js';
 import addressRoutes from './routes/addressRoutes.js';
 import documentRoutes from './routes/documentRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
+import wishlistRoutes from './routes/wishlistRoutes.js';
 import { errorHandler } from './middleware/error.js';
 import { initializeDatabase } from './config/initDb.js';
 
@@ -50,6 +51,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/addresses', addressRoutes);
 app.use('/api/documents', documentRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/wishlist', wishlistRoutes);
 
 // Initialize database (create tables, add missing columns, etc.)
 initializeDatabase().catch(err => {

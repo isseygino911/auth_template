@@ -117,7 +117,7 @@ export const initializeSettings = async () => {
     
     // Check if tax_rate exists
     const result = await db.query('SELECT * FROM settings WHERE `key` = ?', ['tax_rate']);
-    if (result.length === 0) {
+    if (!Array.isArray(result) || result.length === 0) {
       await db.query(
         'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, NOW())',
         ['tax_rate', DEFAULT_TAX_RATE.toString()]

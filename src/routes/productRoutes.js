@@ -11,7 +11,7 @@ const convertProductImage = async (product) => {
   if (!product) return product;
   return {
     ...product,
-    image_url: await getPresignedUrl(product.image_url, 3600)
+    image_url: await getPresignedUrl(product.image_url, 3600).catch(() => product.image_url)
   };
 };
 
@@ -32,17 +32,22 @@ const fetchProductsWithImages = async (sql, params) => {
       
       return {
         ...product,
-        image_url: await getPresignedUrl(imageUrl, 3600)
+        image_url: await getPresignedUrl(imageUrl, 3600).catch(() => imageUrl)
       };
     })
   );
-  
+
   return productsWithImages;
 };
 
 // Get all products (public - for storefront)
 router.get('/', asyncHandler(async (req, res) => {
-  const { category, search } = req.query;
+  const { category, search, sort = 'created_at', order = 'DESC' } = req.query;
+  
+  // Validate sort field to prevent SQL injection
+  const allowedSortFields = ['name', 'price', 'created_at', 'category', 'stock_quantity'];
+  const sortField = allowedSortFields.includes(sort) ? sort : 'created_at';
+  const sortOrder = order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
   
   let sql = `
     SELECT id, uuid, name, model_number, description, specifications, price, original_price, 
@@ -62,7 +67,7 @@ router.get('/', asyncHandler(async (req, res) => {
     params.push(`%${search}%`, `%${search}%`);
   }
   
-  sql += ' ORDER BY created_at DESC';
+  sql += ` ORDER BY ${sortField} ${sortOrder}`;
   
   const products = await fetchProductsWithImages(sql, params);
   
@@ -98,14 +103,14 @@ router.get('/categories', asyncHandler(async (req, res) => {
 // Get single product (public) - accepts UUID or numeric ID
 router.get('/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  
+
   // Check if id is a UUID format (contains hyphens and is 36 chars)
   const isUUID = id.includes('-') && id.length === 36;
-  
+
   const result = await db.query(
-    `SELECT id, uuid, name, model_number, description, specifications, price, original_price, 
+    `SELECT id, uuid, name, model_number, description, specifications, price, original_price,
             category, image_url, stock_quantity, status, metadata, created_at
-     FROM products 
+     FROM products
      WHERE ${isUUID ? 'uuid' : 'id'} = ? AND status = 'active'`,
     [id]
   );
