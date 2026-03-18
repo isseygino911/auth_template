@@ -3,6 +3,33 @@ import { hashPassword, comparePassword } from '../utils/hash.js';
 import { generateToken } from '../utils/jwt.js';
 import { asyncHandler } from '../middleware/error.js';
 
+// Password validation helper
+const validatePassword = (password) => {
+  const errors = [];
+
+  if (password.length < 8) {
+    errors.push('at least 8 characters');
+  }
+
+  if (!/[A-Z]/.test(password)) {
+    errors.push('at least one uppercase letter');
+  }
+
+  if (!/[a-z]/.test(password)) {
+    errors.push('at least one lowercase letter');
+  }
+
+  if (!/[0-9]/.test(password)) {
+    errors.push('at least one number');
+  }
+
+  if (errors.length > 0) {
+    return `Password must contain ${errors.join(', ')}`;
+  }
+
+  return null;
+};
+
 export const register = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
@@ -10,8 +37,15 @@ export const register = asyncHandler(async (req, res) => {
     return res.status(400).json({ message: 'Email and password are required' });
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ message: 'Password must be at least 6 characters' });
+  // Email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Invalid email format' });
+  }
+
+  const passwordError = validatePassword(password);
+  if (passwordError) {
+    return res.status(400).json({ message: passwordError });
   }
 
   // Check if user exists
@@ -42,6 +76,16 @@ export const login = asyncHandler(async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: 'Email and password are required' });
   }
+
+  // Email format validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Invalid email format' });
+  }
+
+  // Note: We don't validate password complexity on login
+  // This allows users with old passwords to still log in
+  // Password validation only applies to new registrations
 
   // Find user
   const users = await db.query('SELECT id, email, password_hash, is_admin FROM users WHERE email = ?', [email]);
