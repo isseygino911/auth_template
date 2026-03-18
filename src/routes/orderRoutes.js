@@ -53,23 +53,25 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
   try {
     await connection.beginTransaction();
     
-    // 1. Validate stock availability FIRST (before any inserts)
-    // Use FOR UPDATE to lock rows and prevent race conditions
+    // 1. Validate stock availability and lock rows (prevents race conditions)
     for (const item of items) {
-      const [productRow] = await connection.query(
-        `SELECT stock_quantity FROM products WHERE id = ? FOR UPDATE`,
+      const productResult = await connection.query(
+        `SELECT stock_quantity, name FROM products WHERE id = ? FOR UPDATE`,
         [item.product_id]
       );
-      if (!productRow) {
+      const products = normalizeResult(productResult);
+      
+      if (products.length === 0) {
         await connection.rollback();
         return res.status(400).json({ message: `Product ID ${item.product_id} not found` });
       }
-      const availableStock = productRow?.stock_quantity || 0;
-
+      
+      const availableStock = products[0].stock_quantity;
+      
       if (availableStock < item.quantity) {
         await connection.rollback();
         return res.status(400).json({
-          message: `Insufficient stock for product. Available: ${availableStock}, Requested: ${item.quantity}`
+          message: `Insufficient stock for "${products[0].name}". Available: ${availableStock}, Requested: ${item.quantity}`
         });
       }
     }
@@ -85,24 +87,21 @@ router.post('/', authMiddleware, asyncHandler(async (req, res) => {
 
     const orderId = orderResult.insertId;
 
-    // 3. Create order items and decrement stock (snapshot product name for historical integrity)
+    // 3. Create order items and deduct stock
     for (const item of items) {
-      const [productRow] = await connection.query(
-        `SELECT stock_quantity, name FROM products WHERE id = ? FOR UPDATE`,
+      const productResult = await connection.query(
+        `SELECT name FROM products WHERE id = ?`,
         [item.product_id]
       );
-      if (!productRow) {
-        await connection.rollback();
-        return res.status(400).json({ message: `Product ID ${item.product_id} not found` });
-      }
+      const products = normalizeResult(productResult);
 
       await connection.query(
         `INSERT INTO order_items (order_id, product_id, quantity, price_at_time, product_name_snapshot)
          VALUES (?, ?, ?, ?, ?)`,
-        [orderId, item.product_id, item.quantity, item.price, productRow?.name || '']
+        [orderId, item.product_id, item.quantity, item.price, products[0]?.name || '']
       );
 
-      // Decrement stock (already validated above)
+      // Deduct stock immediately
       await connection.query(
         `UPDATE products SET stock_quantity = stock_quantity - ? WHERE id = ?`,
         [item.quantity, item.product_id]
@@ -212,6 +211,73 @@ router.get('/:id', authMiddleware, asyncHandler(async (req, res) => {
     },
     items
   });
+}));
+
+// Cancel an order (requires authentication)
+router.put('/:id/cancel', authMiddleware, asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.userId;
+  
+  // Get order and verify it belongs to user
+  const orderResult = await db.query(
+    `SELECT * FROM orders WHERE id = ? AND user_id = ?`,
+    [id, userId]
+  );
+  const orders = normalizeResult(orderResult);
+  
+  if (orders.length === 0) {
+    return res.status(404).json({ message: 'Order not found' });
+  }
+  
+  const order = orders[0];
+  
+  // Check if order can be cancelled
+  if (order.status === 'cancelled') {
+    return res.status(400).json({ message: 'Order is already cancelled' });
+  }
+  
+  if (order.status === 'completed' || order.status === 'shipped') {
+    return res.status(400).json({ message: 'Cannot cancel a completed or shipped order' });
+  }
+  
+  const connection = await db.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    // Restore stock for all order items
+    const itemsResult = await connection.query(
+      `SELECT product_id, quantity FROM order_items WHERE order_id = ?`,
+      [id]
+    );
+    const items = normalizeResult(itemsResult);
+    
+    for (const item of items) {
+      await connection.query(
+        `UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?`,
+        [item.quantity, item.product_id]
+      );
+    }
+    
+    // Update order status to cancelled
+    await connection.query(
+      `UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ?`,
+      ['cancelled', id]
+    );
+    
+    await connection.commit();
+    
+    res.json({ 
+      message: 'Order cancelled successfully',
+      orderId: id
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error cancelling order:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
 }));
 
 export default router;

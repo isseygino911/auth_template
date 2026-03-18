@@ -567,28 +567,81 @@ export const getOrder = asyncHandler(async (req, res) => {
 // Update order status
 export const updateOrderStatus = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status: newStatus } = req.body;
   
   // Validate status against allowed values
   const VALID_STATUSES = ['pending', 'processing', 'shipped', 'delivered', 'cancelled'];
-  if (!VALID_STATUSES.includes(status)) {
+  if (!VALID_STATUSES.includes(newStatus)) {
     return res.status(400).json({ 
       message: `Invalid order status. Must be one of: ${VALID_STATUSES.join(', ')}` 
     });
   }
   
-  await db.query(
-    'UPDATE orders SET status = ? WHERE id = ?',
-    [status, id]
-  );
+  // Get current order status first
+  const currentResult = await db.query('SELECT status FROM orders WHERE id = ?', [id]);
+  const currentOrder = normalizeResult(currentResult);
   
-  const result = await db.query('SELECT * FROM orders WHERE id = ?', [id]);
-  const order = normalizeResult(result);
+  if (currentOrder.length === 0) {
+    return res.status(404).json({ message: 'Order not found' });
+  }
   
-  res.json({ 
-    message: 'Order status updated',
-    order: order[0]
-  });
+  const oldStatus = currentOrder[0].status;
+  
+  // If status hasn't changed, just return success
+  if (oldStatus === newStatus) {
+    const result = await db.query('SELECT * FROM orders WHERE id = ?', [id]);
+    const order = normalizeResult(result);
+    return res.json({ 
+      message: 'Order status unchanged',
+      order: order[0]
+    });
+  }
+  
+  const connection = await db.getConnection();
+  
+  try {
+    await connection.beginTransaction();
+    
+    // When order is cancelled, restore stock
+    if (newStatus === 'cancelled' && oldStatus !== 'cancelled') {
+      // Get order items
+      const itemsResult = await connection.query(
+        `SELECT product_id, quantity FROM order_items WHERE order_id = ?`,
+        [id]
+      );
+      const items = normalizeResult(itemsResult);
+      
+      // Restore stock for each item
+      for (const item of items) {
+        await connection.query(
+          `UPDATE products SET stock_quantity = stock_quantity + ? WHERE id = ?`,
+          [item.quantity, item.product_id]
+        );
+      }
+    }
+    
+    // Update the order status
+    await connection.query(
+      'UPDATE orders SET status = ? WHERE id = ?',
+      [newStatus, id]
+    );
+    
+    await connection.commit();
+    
+    const result = await db.query('SELECT * FROM orders WHERE id = ?', [id]);
+    const order = normalizeResult(result);
+    
+    res.json({ 
+      message: 'Order status updated',
+      order: order[0]
+    });
+  } catch (error) {
+    await connection.rollback();
+    console.error('Error updating order status:', error);
+    throw error;
+  } finally {
+    connection.release();
+  }
 });
 
 // ==================== DASHBOARD ====================
