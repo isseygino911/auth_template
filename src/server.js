@@ -23,6 +23,7 @@ const allowedOrigins = [
   'https://ophieliu.com',
   'https://www.ophieliu.com',
   'https://api.ophieliu.com',
+  'http://localhost:8081',
   process.env.CORS_ORIGIN,
 ].filter(Boolean);
 
